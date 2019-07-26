@@ -11,12 +11,14 @@
 // Some of these parameters are set when the scene is built, and
 // others are set by the framework in response to user mouse/keyboard
 // interactions.  All of them should be used to draw the scene.
+#pragma once
 
 #include <glm/glm.hpp>
 #include <glm/ext.hpp>
 using namespace glm;
 
 #include "models.h"
+#include "fbo.h"
 
 class Scene
 {
@@ -50,6 +52,7 @@ public:
 
     // Shader programs
     ShaderProgram lightingShader;
+	ShaderProgram shadowShader;
 
     // The polygon models
     Model* centralPolygons;
@@ -60,6 +63,10 @@ public:
     int groundColor;
 	int earthDay;
 	int earthNight;
+
+	//Shadows
+	FBO shadowFBO;
+	int shadowMap;
 };
 
 void InitializeScene(Scene &scene);

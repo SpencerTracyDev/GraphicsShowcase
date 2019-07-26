@@ -11,6 +11,7 @@ uniform mat4 ModelMatrix;
 uniform mat4 ViewMatrix, ViewInverse;
 uniform mat4 ProjectionMatrix;
 uniform mat4 NormalMatrix;
+uniform mat4 ShadowMatrix;
 
 uniform vec3 lightPos;
 
@@ -24,6 +25,8 @@ out vec2 texCoord;
 
 out vec3 normalVec, lightVec, eyeVec;
 
+out vec4 shadowCoord;
+
 void main()
 {      
     tangent = vertexTangent;
@@ -34,6 +37,8 @@ void main()
     vec3 worldVertex = vec3(ModelMatrix * vertex);
     eyeVec = (ViewInverse*vec4(0,0,0,1)).xyz - worldVertex;
     lightVec = lightPos - worldVertex;
+
+	shadowCoord = ShadowMatrix * ModelMatrix * vertex;
 
     gl_Position = ProjectionMatrix*ViewMatrix*ModelMatrix*vertex;
 }

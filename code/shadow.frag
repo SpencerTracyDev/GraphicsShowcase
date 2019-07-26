@@ -1,0 +1,15 @@
+/////////////////////////////////////////////////////////////////////////
+// Pixel shader for the final pass
+//
+// Copyright 2013 DigiPen Institute of Technology
+////////////////////////////////////////////////////////////////////////
+#version 330
+
+in float position;
+
+void main()
+{
+   gl_FragColor.w = position;
+   //gl_FragColor.w = 100;
+   //gl_FragColor.a = 0.0;
+}

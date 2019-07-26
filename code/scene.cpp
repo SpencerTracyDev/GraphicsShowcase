@@ -12,6 +12,7 @@
 //
 // Copyright 2013 DigiPen Institute of Technology
 ////////////////////////////////////////////////////////////////////////
+#pragma once
 
 #include "math.h"
 #include <fstream>
@@ -24,9 +25,9 @@
 #include <glm/gtc/matrix_inverse.hpp>
 
 #include "shader.h"
-#include "fbo.h"
 #include "models.h"
 #include "scene.h"
+#include "fbo.h"
 
 using namespace glm;
 
@@ -114,7 +115,14 @@ void InitializeScene(Scene &scene)
         scale(Identity, s,s,s)
         *translate(-scene.centralPolygons->center);
 
-    // Create the lighting shader program from source code files.
+
+	// Create the SHADOW shader program from source code files.
+    scene.shadowShader.CreateProgram();
+    scene.shadowShader.CreateShader("shadow.vert", GL_VERTEX_SHADER);
+    scene.shadowShader.CreateShader("shadow.frag", GL_FRAGMENT_SHADER);
+    scene.shadowShader.LinkProgram();
+
+    // Create the LIGHTING shader program from source code files.
     scene.lightingShader.CreateProgram();
     scene.lightingShader.CreateShader("lighting.vert", GL_VERTEX_SHADER);
     scene.lightingShader.CreateShader("lighting.frag", GL_FRAGMENT_SHADER);
@@ -128,6 +136,7 @@ void InitializeScene(Scene &scene)
     try {
         glimg::ImageSet* img;
 
+		
         img = glimg::loaders::stb::LoadFromFile("ChippedRedBricks-ColorMap.png");
         scene.groundColor = glimg::CreateTexture(img, 0);
         glBindTexture(GL_TEXTURE_2D, scene.groundColor);
@@ -148,12 +157,16 @@ void InitializeScene(Scene &scene)
         glGenerateMipmap(GL_TEXTURE_2D);
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		
 
 
 	}
     catch (glimg::loaders::stb::UnableToLoadException e) {
         printf("%s\n", e.what());
         exit(-1); }
+
+	// Create the FBO for SHADOWS.
+	scene.shadowFBO.CreateFBO(1000, 1000);
 
     CHECKERROR;
 }
@@ -175,6 +188,7 @@ void DrawModel(Scene &scene, const int program, Model* m, mat4x4& ModelTr)
     loc = glGetUniformLocation(program, "phongShininess");
     glUniform1f(loc, m->shininess);
 
+	
     loc = glGetUniformLocation(program, "earthDay");
     glUniform1i(loc, 0);
 
@@ -186,6 +200,7 @@ void DrawModel(Scene &scene, const int program, Model* m, mat4x4& ModelTr)
 
 	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, scene.earthNight);
+	
 
     loc = glGetUniformLocation(program, "useTexture");
     glUniform1i(loc, 1);
@@ -263,10 +278,12 @@ void DrawGround(Scene &scene, unsigned int program, mat4x4& ModelTr)
     loc = glGetUniformLocation(program, "phongShininess");
     glUniform1f(loc, scene.groundPolygons->shininess);
 
+	
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, scene.groundColor);
     loc = glGetUniformLocation(program, "groundColor");
     glUniform1i(loc, 1);
+	
 
     loc = glGetUniformLocation(program, "useTexture");
     glUniform1i(loc, 1);
@@ -319,12 +336,30 @@ void DrawScene(Scene &scene)
        scene.lightDist*cos(scene.lightTilt*rad),
        1.0 };
 
+	
+	scene.lightDir.x = cos(scene.lightSpin*rad)*sin(scene.lightTilt*rad);
+	scene.lightDir.y = sin(scene.lightSpin*rad)*sin(scene.lightTilt*rad);
+	scene.lightDir.z = cos(scene.lightTilt*rad);
+	
+
     mat4x4 SphereModelTr = rotate(atime, 0.0f, 0.0f, 1.0f);
     mat4x4 SunModelTr = translate(lPos[0],lPos[1],lPos[2]);
+
+	//mat4x4 shadowPosition;
 
     float sx, sy;
     sy = 0.6f*scene.front;
     sx = sy * scene.width/scene.height;
+
+	float lx, ly;
+	float lightW = 2.5f * 0.5f / scene.lightDist;
+	float lightH = lightW;
+
+	ly = 0.1f * scene.lightDist;
+    lx = ly;
+
+	vec3 upDir = vec3(0.0f, 1.0f, 0.0f);
+	vec3 lightPos = vec3(lPos[0], lPos[1], lPos[2]);
 
     mat4x4 T1 = translate(scene.translatex, scene.translatey, -scene.zoom);
     mat4x4 T2 = rotate(T1, scene.eyeTilt, 1.0f, 0.0f, 0.0f);
@@ -332,15 +367,91 @@ void DrawScene(Scene &scene)
     mat4x4 WorldInv = affineInverse(WorldView);
     mat4x4 WorldProj = frustum(-sx, sx, -sy, sy, scene.front, 10000.0f);
 
+	//SHADOWS
+	
+	mat4x4 ShadowView = lookAt(lightPos, scene.lightDir, upDir);
+	//printf("Light dist: %f, %f, %f\n", scene.lightDir.x, scene.lightDir.y, scene.lightDir.z);
+	//printf("Light dist: %f\n", scene.lightDist);
+	mat4x4 ShadowInv = affineInverse(ShadowView);
+	mat4x4 ShadowProj = frustum(-lx, lx, -ly, ly, ly, 10000.0f);
+
+	mat4x4 ShadowMatrix = (translate(0.5f, 0.5f, 0.5f) * scale(0.5f, 0.5f, 0.5f)) * ShadowProj * ShadowView;
+
     glutTimerFunc(100, animate, 1);
 
+	///////////////////////////////////////////////////////////////////
+    // SHADOW pass: Draw the scene with shadows being calculated in
+    // the shadow shader.
     ///////////////////////////////////////////////////////////////////
-    // Lighting pass: Draw the scene with lighting being calculated in
+
+	glEnable(GL_CULL_FACE);
+	glCullFace(GL_FRONT);
+
+	//Bind FBO for shadow pass
+	scene.shadowFBO.Bind();
+	scene.shadowMap = scene.shadowFBO.texture;
+
+	//set the viewport to be the size of the texture
+	glViewport(0, 0, 1000, 1000);
+ 
+	//clear the ouput texture
+	glClear ( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+
+	// Use shadow pass shader
+	program = scene.shadowShader.program;
+    scene.shadowShader.Use();
+
+
+
+	// Setup the perspective and modelview matrices for normal viewing.
+    loc = glGetUniformLocation(program, "ProjectionMatrix");
+    glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(ShadowProj));
+    loc = glGetUniformLocation(program, "ViewMatrix");
+    glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(ShadowView));
+	loc = glGetUniformLocation(program, "ViewInverse");
+    glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(ShadowInv));
+    CHECKERROR;
+
+    // Setup the initial model matrix (in gl_ModelViewMatrix)
+    loc = glGetUniformLocation(program, "ModelMatrix");
+    glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(Identity));
+    loc = glGetUniformLocation(program, "NormalMatrix");
+    glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(Identity));
+    CHECKERROR;
+
+
+	/*
+	//Setup position matrix
+	loc = glGetUniformLocation(program, "position");
+    glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(shadowPosition));
+	*/
+
+    // Draw the scene objects.
+    DrawSun(scene, program, SunModelTr);
+    if (scene.drawSpheres) DrawSpheres(scene, program, SphereModelTr);
+    if (scene.drawGround) DrawGround(scene, program, Identity);
+    DrawModel(scene, program, scene.centralPolygons, scene.centralTr);
+    CHECKERROR;
+	
+
+	//Unbind FBO for shadow pass
+	scene.shadowFBO.Unbind();
+	CHECKERROR;
+
+	//Unuse shadow pass shader
+	scene.shadowShader.Unuse();
+	CHECKERROR;
+	glDisable(GL_CULL_FACE);
+
+    ///////////////////////////////////////////////////////////////////
+    // LIGHTING pass: Draw the scene with lighting being calculated in
     // the lighting shader.
     ///////////////////////////////////////////////////////////////////
 
-    program = scene.lightingShader.program;
-    // Set the viewport, and clear the screen
+	program = scene.lightingShader.program;
+	
+	
+	// Set the viewport, and clear the screen
     glViewport(0,0,scene.width, scene.height);
     glClearColor(0.5,0.5, 0.5, 1.0);
     glClear(GL_COLOR_BUFFER_BIT| GL_DEPTH_BUFFER_BIT);
@@ -362,6 +473,16 @@ void DrawScene(Scene &scene)
     glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(Identity));
     loc = glGetUniformLocation(program, "NormalMatrix");
     glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(Identity));
+    CHECKERROR;
+
+	//Setup the pass of shadow matrix and shadow coord and shadow map
+	loc = glGetUniformLocation(program, "ShadowMatrix");
+    glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(ShadowMatrix));
+	
+    loc = glGetUniformLocation(program, "shadowMap");
+    glUniform1i(loc, 4);
+	glActiveTexture(GL_TEXTURE4);
+	glBindTexture(GL_TEXTURE_2D, scene.shadowMap);
     CHECKERROR;
 
     // Make each texture from earlier passes active in a texture unit, and
@@ -392,5 +513,5 @@ void DrawScene(Scene &scene)
     // Done with shader program
     scene.lightingShader.Unuse();
     CHECKERROR;
-
+	
 }

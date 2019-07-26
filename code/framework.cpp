@@ -6,6 +6,7 @@
 //
 // Copyright 2013 DigiPen Institute of Technology
 ////////////////////////////////////////////////////////////////////////
+#pragma once
 
 #ifdef _WIN32
     // Includes for Windows
